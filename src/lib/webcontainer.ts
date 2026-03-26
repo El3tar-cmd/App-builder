@@ -5,6 +5,13 @@ let bootPromise: Promise<WebContainer> | null = null;
 
 export async function getWebContainer(): Promise<WebContainer> {
   if (!bootPromise) {
+    if (!window.crossOriginIsolated) {
+      throw new Error(
+        "WebContainers require a cross-origin isolated environment. " +
+        "Please ensure third-party cookies are enabled in your browser settings, " +
+        "or try opening the app in a new tab."
+      );
+    }
     bootPromise = WebContainer.boot();
   }
   return bootPromise;

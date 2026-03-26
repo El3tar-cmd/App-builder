@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DevHive Builder</title>
     <script src="/coi-serviceworker.js"></script>
+    <script>
+      console.log("crossOriginIsolated:", window.crossOriginIsolated);
+      console.log("isSecureContext:", window.isSecureContext);
+    </script>
   </head>
   <body>
     <div id="root"></div>

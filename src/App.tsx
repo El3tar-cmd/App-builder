@@ -38,7 +38,8 @@ import { IntelligentLoadingOverlay } from './components/IntelligentLoadingOverla
 import { exportProjectToZip } from './lib/export';
 import { cn } from './lib/utils';
 import { getWebContainer, filesToTree } from './lib/webcontainer';
-import { Github, Palette } from 'lucide-react';
+import { Github, Palette, MessageSquare, User, Bot } from 'lucide-react';
+import Markdown from 'react-markdown';
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
@@ -47,8 +48,19 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [appData, setAppData] = useState<AppStructure | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'code' | 'preview' | 'designer' | 'review' | 'roadmap'>('code');
+  const [activeTab, setActiveTab] = useState<'chat' | 'code' | 'preview' | 'designer' | 'review' | 'roadmap'>('chat');
   const [logs, setLogs] = useState<string[]>([]);
+  const [messages, setMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [showSettings, setShowSettings] = useState(false);
@@ -82,13 +94,16 @@ export default function App() {
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
     
+    const currentPrompt = prompt;
+    setPrompt('');
     setIsGenerating(true);
     const isModification = !!appData;
     setLogs([]);
-    if (!isModification) {
-      setAppData(null);
-      isServerRunningRef.current = false;
-    }
+    
+    setMessages(prev => [...prev, { role: 'user', content: currentPrompt }]);
+    
+    // Add a temporary assistant message that we will update
+    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
     
     const steps = isModification ? [
       "Initializing Neural Architect Engine...",
@@ -110,27 +125,53 @@ export default function App() {
     
     try {
       let hasStartedStreaming = false;
-      const result = await generateApp(prompt, appData, { useWebSearch, modelConfig }, (partialApp) => {
-        if (!hasStartedStreaming && partialApp.files.length > 0) {
+      const currentMessages = [...messages, { role: 'user' as const, content: currentPrompt }];
+      const result = await generateApp(currentPrompt, appData, { useWebSearch, modelConfig, messages: currentMessages }, (partialResult) => {
+        if (!hasStartedStreaming && partialResult.app && partialResult.app.files.length > 0) {
           hasStartedStreaming = true;
           setIsStreaming(true);
-        }
-        setAppData(partialApp);
-        if (partialApp.files.length > 0) {
-          // Auto-select the last file being generated so the user can watch it type
-          const lastFile = partialApp.files[partialApp.files.length - 1];
-          setSelectedFilePath(lastFile.path);
-          // Switch to code tab to watch it stream
           setActiveTab('code');
+        } else if (!hasStartedStreaming && partialResult.text) {
+          setActiveTab('chat');
         }
+        
+        if (partialResult.app) {
+          setAppData(partialResult.app);
+          if (partialResult.app.files.length > 0) {
+            // Auto-select the last file being generated so the user can watch it type
+            const lastFile = partialResult.app.files[partialResult.app.files.length - 1];
+            setSelectedFilePath(lastFile.path);
+          }
+        }
+        
+        // Update the last assistant message
+        setMessages(prev => {
+          const newMessages = [...prev];
+          newMessages[newMessages.length - 1].content = partialResult.text;
+          return newMessages;
+        });
       });
       
-      setAppData(result);
-      setLogs(prev => [...prev, isModification ? "✓ App modified successfully!" : "✓ App generated successfully!", `Project: ${result.name}`]);
-      setPrompt('');
+      if (result.app) {
+        setAppData(result.app);
+        isServerRunningRef.current = false; // Force a reboot if the app changed
+      }
+      
+      setMessages(prev => {
+        const newMessages = [...prev];
+        newMessages[newMessages.length - 1].content = result.text || (result.app ? "I've updated the code for you." : "I couldn't generate a response.");
+        return newMessages;
+      });
+      
+      setLogs(prev => [...prev, isModification ? "✓ App modified successfully!" : "✓ App generated successfully!", result.app ? `Project: ${result.app.name}` : "Response complete."]);
     } catch (error) {
       console.error(error);
       setLogs(prev => [...prev, "⚠ Error: Failed to generate app. Please check your connection and try again."]);
+      setMessages(prev => {
+        const newMessages = [...prev];
+        newMessages[newMessages.length - 1].content = "Sorry, I encountered an error while processing your request.";
+        return newMessages;
+      });
     } finally {
       setIsGenerating(false);
       setIsStreaming(false);
@@ -338,6 +379,19 @@ export default function App() {
           <button 
             className={cn(
               "flex items-center gap-2 rounded-md px-2 md:px-3 py-1.5 text-xs font-medium transition-colors",
+              activeTab === 'chat' ? "bg-zinc-700 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+            )}
+            onClick={() => {
+              setActiveTab('chat');
+              if (isMobile) setSidebarOpen(false);
+            }}
+          >
+            <MessageSquare size={14} />
+            <span className="hidden xs:block">Chat</span>
+          </button>
+          <button 
+            className={cn(
+              "flex items-center gap-2 rounded-md px-2 md:px-3 py-1.5 text-xs font-medium transition-colors",
               activeTab === 'designer' ? "bg-zinc-700 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
             )}
             onClick={() => {
@@ -460,7 +514,43 @@ export default function App() {
             {isGenerating && !isStreaming && <IntelligentLoadingOverlay logs={logs} />}
           </AnimatePresence>
 
-          {activeTab === 'code' ? (
+          {activeTab === 'chat' ? (
+            <div className="flex flex-1 flex-col overflow-hidden bg-[#111]">
+              <div className="flex-1 overflow-y-auto p-4 md:p-8">
+                {messages.length === 0 ? (
+                  <HeroState 
+                    onSuggestionClick={(suggestion) => {
+                      setPrompt(suggestion);
+                    }} 
+                  />
+                ) : (
+                  <div className="mx-auto max-w-3xl space-y-6 pb-20">
+                    {messages.map((msg, idx) => (
+                      <div key={idx} className={cn("flex gap-4", msg.role === 'user' ? "flex-row-reverse" : "")}>
+                        <div className={cn(
+                          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-sm",
+                          msg.role === 'user' ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400 border border-zinc-700"
+                        )}>
+                          {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+                        </div>
+                        <div className={cn(
+                          "rounded-2xl px-5 py-3.5 max-w-[85%] shadow-sm",
+                          msg.role === 'user' ? "bg-blue-600 text-white rounded-tr-sm" : "bg-zinc-800 text-zinc-300 rounded-tl-sm border border-zinc-700"
+                        )}>
+                          <div className="markdown-body text-sm leading-relaxed">
+                            <Markdown>
+                              {msg.content || (isGenerating && idx === messages.length - 1 ? "Thinking..." : "")}
+                            </Markdown>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <div ref={messagesEndRef} />
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : activeTab === 'code' ? (
             <div className="flex flex-1 flex-col overflow-hidden">
               {selectedFile ? (
                 <div className="flex flex-1 flex-col overflow-hidden">
@@ -475,13 +565,10 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <HeroState 
-                  onSuggestionClick={(suggestion) => {
-                    setPrompt(suggestion);
-                    // We don't auto-generate here to let them review, or we could.
-                    // Let's just set the prompt and focus the input.
-                  }} 
-                />
+                <div className="flex flex-1 flex-col items-center justify-center p-6 text-center text-zinc-500 bg-[#111]">
+                  <Code2 size={32} className="mb-4 opacity-20" />
+                  <p className="text-sm">Select a file from the sidebar to view its code</p>
+                </div>
               )}
             </div>
           ) : activeTab === 'preview' ? (
@@ -518,9 +605,27 @@ export default function App() {
                 </div>
               ) : isBooting || !previewUrl ? (
                 <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 p-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-blue-500 mb-4" />
-                  <h3 className="text-lg font-bold text-zinc-900 mb-2">Setting up environment</h3>
-                  <p className="text-sm text-zinc-500">{previewStatus}</p>
+                  {previewStatus === 'Error booting container' ? (
+                    <>
+                      <AlertCircle className="h-8 w-8 text-red-500 mb-4" />
+                      <h3 className="text-lg font-bold text-zinc-900 mb-2">WebContainer Error</h3>
+                      <p className="text-sm text-zinc-500 max-w-md text-center mb-4">
+                        WebContainers require a cross-origin isolated environment. If you are seeing this error, your browser is likely blocking third-party cookies or service workers.
+                      </p>
+                      <button 
+                        onClick={() => window.open(window.location.href, '_blank')}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
+                      >
+                        Open App in New Tab
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="h-8 w-8 animate-spin text-blue-500 mb-4" />
+                      <h3 className="text-lg font-bold text-zinc-900 mb-2">Setting up environment</h3>
+                      <p className="text-sm text-zinc-500">{previewStatus}</p>
+                    </>
+                  )}
                 </div>
               ) : (
                 <iframe 
