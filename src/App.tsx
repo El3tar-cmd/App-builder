@@ -21,7 +21,9 @@ import {
   ExternalLink,
   Download,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Globe,
+  Hexagon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateApp, AppStructure, GeneratedFile } from './services/ai';
@@ -30,6 +32,9 @@ import { CodeEditor } from './components/CodeEditor';
 import { Terminal } from './components/Terminal';
 import { GitHubModal } from './components/GitHubModal';
 import { VisualDesigner } from './components/VisualDesigner';
+import { HeroState } from './components/HeroState';
+import { ModelSettingsModal, ModelConfig } from './components/ModelSettingsModal';
+import { IntelligentLoadingOverlay } from './components/IntelligentLoadingOverlay';
 import { exportProjectToZip } from './lib/export';
 import { cn } from './lib/utils';
 import { getWebContainer, filesToTree } from './lib/webcontainer';
@@ -38,6 +43,7 @@ import { Github, Palette } from 'lucide-react';
 export default function App() {
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [appData, setAppData] = useState<AppStructure | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -49,6 +55,12 @@ export default function App() {
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [showGitHubModal, setShowGitHubModal] = useState(false);
   const [cloneUrl, setCloneUrl] = useState('');
+  const [useWebSearch, setUseWebSearch] = useState(false);
+  const [modelConfig, setModelConfig] = useState<ModelConfig>({
+    provider: 'gemini',
+    ollamaEndpoint: 'http://localhost:11434',
+    ollamaModel: 'llama3'
+  });
   
   // WebContainer State
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -73,42 +85,46 @@ export default function App() {
     setIsGenerating(true);
     const isModification = !!appData;
     setLogs([]);
+    if (!isModification) {
+      setAppData(null);
+    }
     
     const steps = isModification ? [
       "Initializing Neural Architect Engine...",
       "Analyzing existing codebase and component tree...",
       "Planning targeted modifications...",
-      "Refactoring React components and state logic...",
-      "Updating backend API routes and middleware...",
-      "Verifying integration and static analysis...",
-      "Finalizing iterative deployment..."
+      "Streaming modifications..."
     ] : [
       "Initializing Neural Architect Engine...",
       "Analyzing semantic requirements and design patterns...",
-      "Synthesizing full-stack architecture (React 19 + Node.js 22)...",
-      "Optimizing database schema with relational integrity...",
-      "Generating responsive UI components with Tailwind JIT...",
-      "Implementing secure RESTful API layer and middleware...",
-      "Compiling source code and performing static analysis...",
-      "Running production-grade build and optimization...",
-      "Finalizing project artifacts and deployment manifests..."
+      "Synthesizing full-stack architecture...",
+      "Streaming files..."
     ];
 
-    // Simulate thinking steps
+    // Simulate initial thinking steps
     for (const step of steps) {
       setLogs(prev => [...prev, step]);
-      await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1000));
+      await new Promise(resolve => setTimeout(resolve, 600));
     }
     
     try {
-      const result = await generateApp(prompt, appData);
-      setAppData(result);
-      if (result.files.length > 0) {
-        const fileExists = result.files.some(f => f.path === selectedFilePath);
-        if (!fileExists) {
-          setSelectedFilePath(result.files[0].path);
+      let hasStartedStreaming = false;
+      const result = await generateApp(prompt, appData, { useWebSearch, modelConfig }, (partialApp) => {
+        if (!hasStartedStreaming && partialApp.files.length > 0) {
+          hasStartedStreaming = true;
+          setIsStreaming(true);
         }
-      }
+        setAppData(partialApp);
+        if (partialApp.files.length > 0) {
+          // Auto-select the last file being generated so the user can watch it type
+          const lastFile = partialApp.files[partialApp.files.length - 1];
+          setSelectedFilePath(lastFile.path);
+          // Switch to code tab to watch it stream
+          setActiveTab('code');
+        }
+      });
+      
+      setAppData(result);
       setLogs(prev => [...prev, isModification ? "✓ App modified successfully!" : "✓ App generated successfully!", `Project: ${result.name}`]);
       setPrompt('');
     } catch (error) {
@@ -116,6 +132,7 @@ export default function App() {
       setLogs(prev => [...prev, "⚠ Error: Failed to generate app. Please check your connection and try again."]);
     } finally {
       setIsGenerating(false);
+      setIsStreaming(false);
     }
   };
 
@@ -260,10 +277,13 @@ export default function App() {
               {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
           )}
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white shrink-0">
-            <Sparkles size={18} />
+          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white shrink-0 shadow-lg shadow-orange-500/20">
+            <Hexagon size={20} className="absolute" strokeWidth={2.5} />
+            <div className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
           </div>
-          <h1 className="text-sm font-bold tracking-tight text-white hidden sm:block">Nexus AI Builder</h1>
+          <h1 className="text-sm font-bold tracking-tight text-white hidden sm:block">
+            DevHive <span className="text-orange-500">Builder</span>
+          </h1>
           {appData && (
             <div className="ml-1 md:ml-4 flex items-center gap-2 rounded-full bg-zinc-800 px-2 md:px-3 py-1 text-[10px] md:text-xs">
               <span className="h-1.5 w-1.5 md:h-2 md:w-2 rounded-full bg-green-500 animate-pulse" />
@@ -273,6 +293,13 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
+          <button 
+            onClick={() => setShowSettings(true)}
+            className="mr-2 flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors"
+            title="Model Settings"
+          >
+            <Settings size={14} />
+          </button>
           {appData && !isMobile && (
             <>
               <button 
@@ -411,6 +438,11 @@ export default function App() {
             </button>
           )}
 
+          {/* Intelligent Loading Overlay */}
+          <AnimatePresence>
+            {isGenerating && !isStreaming && <IntelligentLoadingOverlay logs={logs} />}
+          </AnimatePresence>
+
           {activeTab === 'code' ? (
             <div className="flex flex-1 flex-col overflow-hidden">
               {selectedFile ? (
@@ -426,15 +458,13 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-1 flex-col items-center justify-center bg-[#1e1e1e] p-12 text-center">
-                  <div className="mb-8 flex h-20 w-20 items-center justify-center rounded-3xl bg-zinc-800/50 text-zinc-600">
-                    <Code2 size={40} />
-                  </div>
-                  <h2 className="mb-2 text-xl font-bold text-white">Ready to build?</h2>
-                  <p className="max-w-md text-sm text-zinc-500">
-                    Enter a prompt below to generate a full-stack React application with an Express backend.
-                  </p>
-                </div>
+                <HeroState 
+                  onSuggestionClick={(suggestion) => {
+                    setPrompt(suggestion);
+                    // We don't auto-generate here to let them review, or we could.
+                    // Let's just set the prompt and focus the input.
+                  }} 
+                />
               )}
             </div>
           ) : activeTab === 'preview' ? (
@@ -449,7 +479,7 @@ export default function App() {
                   </div>
                   <div className="ml-4 flex items-center gap-2 rounded-md bg-white px-3 py-1 text-xs text-zinc-500 shadow-sm ring-1 ring-zinc-200 min-w-[200px]">
                     <span className="opacity-50">https://</span>
-                    <span className="truncate">{previewUrl ? new URL(previewUrl).host : (appData?.name.toLowerCase().replace(/\s+/g, '-') || 'preview') + '.nexus.ai'}</span>
+                    <span className="truncate">{previewUrl ? new URL(previewUrl).host : (appData?.name.toLowerCase().replace(/\s+/g, '-') || 'preview') + '.devhive.app'}</span>
                   </div>
                 </div>
                 {previewUrl && (
@@ -510,7 +540,7 @@ export default function App() {
             <div className="flex flex-1 flex-col overflow-auto bg-[#0a0a0a] p-8">
               <div className="mx-auto max-w-4xl">
                 <div className="mb-12 text-center">
-                  <h2 className="mb-4 text-4xl font-black tracking-tight text-white">Future of Nexus AI</h2>
+                  <h2 className="mb-4 text-4xl font-black tracking-tight text-white">Future of DevHive Builder</h2>
                   <p className="text-lg text-zinc-500">Our vision for the ultimate AI-native development environment.</p>
                 </div>
 
@@ -547,7 +577,7 @@ export default function App() {
                     </div>
                     <h3 className="mb-2 text-xl font-bold text-white">GitHub Integration</h3>
                     <p className="text-sm leading-relaxed text-zinc-400">
-                      Seamlessly push your generated projects to GitHub repositories. Manage branches, commits, and pull requests directly from Nexus.
+                      Seamlessly push your generated projects to GitHub repositories. Manage branches, commits, and pull requests directly from DevHive.
                     </p>
                     <div className="mt-4 inline-flex items-center rounded-full bg-green-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-green-500">
                       Completed
@@ -635,6 +665,18 @@ export default function App() {
                 Add Folder
                 <input type="file" webkitdirectory="" directory="" className="hidden" onChange={handleFileUpload} />
               </label>
+              <button 
+                onClick={() => setUseWebSearch(!useWebSearch)}
+                className={cn(
+                  "flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-bold transition-all",
+                  useWebSearch 
+                    ? "border-blue-500/50 bg-blue-500/10 text-blue-400" 
+                    : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-blue-500/50 hover:text-white"
+                )}
+              >
+                <Globe size={12} />
+                {useWebSearch ? 'Web Search: ON' : 'Web Search: OFF'}
+              </button>
             </div>
 
             <div className="relative flex items-center">
@@ -688,66 +730,15 @@ export default function App() {
       </footer>
 
       {/* Settings Modal */}
-      <AnimatePresence>
-        {showSettings && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowSettings(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="relative w-full max-w-md rounded-2xl border border-zinc-800 bg-[#111] p-6 shadow-2xl"
-            >
-              <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-xl font-bold text-white">Project Settings</h2>
-                <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-white">
-                  <X size={20} />
-                </button>
-              </div>
-              
-              <div className="space-y-6">
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Project Name</label>
-                  <input 
-                    type="text" 
-                    value={appData?.name || "Untitled Project"} 
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm text-zinc-300 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Environment</label>
-                  <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm text-zinc-300">
-                    <div className="h-2 w-2 rounded-full bg-green-500" />
-                    <span>Production (Simulated)</span>
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">AI Model</label>
-                  <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm text-zinc-300">
-                    gemini-3.1-pro-preview
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-8 flex justify-end">
-                <button 
-                  onClick={() => setShowSettings(false)}
-                  className="rounded-xl bg-blue-600 px-6 py-2 text-sm font-bold text-white hover:bg-blue-500 transition-colors"
-                >
-                  Save Changes
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <ModelSettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        config={modelConfig}
+        onSave={(newConfig) => {
+          setModelConfig(newConfig);
+          setLogs(prev => [...prev, `⚙️ AI Provider updated to: ${newConfig.provider.toUpperCase()}`]);
+        }}
+      />
 
       {/* GitHub Modal */}
       {appData && (

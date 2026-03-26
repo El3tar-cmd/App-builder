@@ -96,7 +96,7 @@ export const pushToGitHub = async (config: GitHubConfig, files: GeneratedFile[],
       method: 'POST',
       headers,
       body: JSON.stringify({
-        message: 'Initial commit from Nexus AI',
+        message: 'Initial commit from DevHive Builder',
         tree: treeData.sha,
         parents: [latestCommitSha],
       }),
