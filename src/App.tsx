@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Mic,
   MicOff,
@@ -87,6 +87,7 @@ export default function App() {
     setLogs([]);
     if (!isModification) {
       setAppData(null);
+      isServerRunningRef.current = false;
     }
     
     const steps = isModification ? [
@@ -140,16 +141,17 @@ export default function App() {
     setLogs(prev => [...prev, message]);
   };
 
+  const isServerRunningRef = useRef(false);
+  const devProcessRef = useRef<any>(null);
+
   useEffect(() => {
-    if (!appData) return;
+    if (!appData || isStreaming) return;
 
     let isMounted = true;
 
     const bootContainer = async () => {
       try {
         setIsBooting(true);
-        setPreviewStatus('Booting WebContainer...');
-        addLog('🚀 Booting WebContainer environment...');
         
         const wc = await getWebContainer();
         
@@ -157,6 +159,15 @@ export default function App() {
         addLog('📁 Mounting generated files...');
         await wc.mount(filesToTree(appData.files));
 
+        if (isServerRunningRef.current) {
+          addLog('⚡ Server already running, files updated.');
+          setIsBooting(false);
+          return;
+        }
+
+        setPreviewStatus('Booting WebContainer...');
+        addLog('🚀 Booting WebContainer environment...');
+        
         setPreviewStatus('Installing dependencies...');
         addLog('📦 Running npm install...');
         const installProcess = await wc.spawn('npm', ['install']);
@@ -172,9 +183,14 @@ export default function App() {
           throw new Error('Installation failed');
         }
 
+        if (devProcessRef.current) {
+          devProcessRef.current.kill();
+        }
+
         setPreviewStatus('Starting dev server...');
         addLog('⚡ Starting development server...');
         const devProcess = await wc.spawn('npm', ['run', 'dev']);
+        devProcessRef.current = devProcess;
         
         devProcess.output.pipeTo(new WritableStream({
           write(data) {
@@ -184,6 +200,7 @@ export default function App() {
 
         wc.on('server-ready', (port, url) => {
           if (isMounted) {
+            isServerRunningRef.current = true;
             addLog(`✅ Server ready at ${url}`);
             setPreviewUrl(url);
             setPreviewStatus('Ready');
@@ -206,7 +223,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [appData]);
+  }, [appData, isStreaming]);
 
   const startVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;

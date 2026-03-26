@@ -1,13 +1,13 @@
 import { WebContainer, FileSystemTree } from '@webcontainer/api';
 import { GeneratedFile } from '../services/ai';
 
-let webcontainerInstance: WebContainer | null = null;
+let bootPromise: Promise<WebContainer> | null = null;
 
 export async function getWebContainer(): Promise<WebContainer> {
-  if (!webcontainerInstance) {
-    webcontainerInstance = await WebContainer.boot();
+  if (!bootPromise) {
+    bootPromise = WebContainer.boot();
   }
-  return webcontainerInstance;
+  return bootPromise;
 }
 
 export function filesToTree(files: GeneratedFile[]): FileSystemTree {
