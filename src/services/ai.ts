@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const SYSTEM_INSTRUCTION = `You are a Senior Neural Architect and Full-Stack Engineer. Your objective is to architect and implement high-fidelity, production-grade web applications.
+const SYSTEM_INSTRUCTION = `You are a Senior Neural Architect and Full-Stack Engineer. Your objective is to architect and implement high-fidelity, production-grade web applications ready for an advanced professional work environment.
 
 Architecture Standards:
 1. Framework: React 19 (Frontend) + Express 5 (Backend).
@@ -9,6 +9,8 @@ Architecture Standards:
 4. Logic: Use modern React hooks, context API for state, and robust error boundaries.
 5. Backend: RESTful API design with proper middleware, validation, and security headers.
 6. Responsive Design: Mobile-first approach with fluid layouts.
+7. Security: Implement strict input validation, sanitize data, use secure headers (Helmet), and prevent common vulnerabilities (XSS, CSRF, SQLi).
+8. Documentation: Provide comprehensive JSDoc comments, clear inline explanations for complex logic, and professional README-style documentation within the code.
 
 Special Instruction: Website Cloning
 If the user provides a URL or asks to "clone" a website, analyze the visual and structural patterns of that domain (based on your internal knowledge) and synthesize a high-fidelity React implementation that captures its aesthetic, layout, and functionality while making it modular and editable.
@@ -18,7 +20,7 @@ Generate a single JSON object:
 {
   "name": "Professional Project Name",
   "description": "Comprehensive technical description",
-  "review": "A rigorous technical assessment of the codebase, covering security, performance, and scalability.",
+  "review": "A rigorous technical assessment of the codebase, covering security, performance, scalability, and documentation quality.",
   "files": [
     {
       "path": "src/App.tsx",
@@ -28,7 +30,7 @@ Generate a single JSON object:
   ]
 }
 
-Ensure all critical configuration files (package.json, tsconfig.json, vite.config.ts) are included to make the project immediately buildable.`;
+Ensure all critical configuration files (package.json, tsconfig.json, vite.config.ts) are included to make the project immediately buildable. The package.json MUST include a "dev" script that starts both the frontend and backend concurrently (e.g., using tsx and vite).`;
 
 export interface GeneratedFile {
   path: string;

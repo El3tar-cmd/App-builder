@@ -28,7 +28,12 @@ import { generateApp, AppStructure, GeneratedFile } from './services/ai';
 import { FileTree } from './components/FileTree';
 import { CodeEditor } from './components/CodeEditor';
 import { Terminal } from './components/Terminal';
+import { GitHubModal } from './components/GitHubModal';
+import { VisualDesigner } from './components/VisualDesigner';
+import { exportProjectToZip } from './lib/export';
 import { cn } from './lib/utils';
+import { getWebContainer, filesToTree } from './lib/webcontainer';
+import { Github, Palette } from 'lucide-react';
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
@@ -36,13 +41,19 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [appData, setAppData] = useState<AppStructure | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'code' | 'preview' | 'review' | 'roadmap'>('code');
+  const [activeTab, setActiveTab] = useState<'code' | 'preview' | 'designer' | 'review' | 'roadmap'>('code');
   const [logs, setLogs] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [showSettings, setShowSettings] = useState(false);
   const [showCloneModal, setShowCloneModal] = useState(false);
+  const [showGitHubModal, setShowGitHubModal] = useState(false);
   const [cloneUrl, setCloneUrl] = useState('');
+  
+  // WebContainer State
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewStatus, setPreviewStatus] = useState<string>('');
+  const [isBooting, setIsBooting] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -111,6 +122,74 @@ export default function App() {
   const addLog = (message: string) => {
     setLogs(prev => [...prev, message]);
   };
+
+  useEffect(() => {
+    if (!appData) return;
+
+    let isMounted = true;
+
+    const bootContainer = async () => {
+      try {
+        setIsBooting(true);
+        setPreviewStatus('Booting WebContainer...');
+        addLog('🚀 Booting WebContainer environment...');
+        
+        const wc = await getWebContainer();
+        
+        setPreviewStatus('Mounting files...');
+        addLog('📁 Mounting generated files...');
+        await wc.mount(filesToTree(appData.files));
+
+        setPreviewStatus('Installing dependencies...');
+        addLog('📦 Running npm install...');
+        const installProcess = await wc.spawn('npm', ['install']);
+        
+        installProcess.output.pipeTo(new WritableStream({
+          write(data) {
+            if (isMounted) addLog(`[npm install] ${data}`);
+          }
+        }));
+
+        const installExitCode = await installProcess.exit;
+        if (installExitCode !== 0) {
+          throw new Error('Installation failed');
+        }
+
+        setPreviewStatus('Starting dev server...');
+        addLog('⚡ Starting development server...');
+        const devProcess = await wc.spawn('npm', ['run', 'dev']);
+        
+        devProcess.output.pipeTo(new WritableStream({
+          write(data) {
+            if (isMounted) addLog(`[dev server] ${data}`);
+          }
+        }));
+
+        wc.on('server-ready', (port, url) => {
+          if (isMounted) {
+            addLog(`✅ Server ready at ${url}`);
+            setPreviewUrl(url);
+            setPreviewStatus('Ready');
+            setIsBooting(false);
+          }
+        });
+
+      } catch (error) {
+        console.error('WebContainer error:', error);
+        if (isMounted) {
+          addLog(`❌ WebContainer error: ${error instanceof Error ? error.message : String(error)}`);
+          setPreviewStatus('Error booting container');
+          setIsBooting(false);
+        }
+      }
+    };
+
+    bootContainer();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [appData]);
 
   const startVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -194,15 +273,38 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
-          {!isMobile && (
-            <button 
-              className="flex items-center gap-2 rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium hover:bg-zinc-700 transition-colors"
-              onClick={() => addLog("Exporting project...")}
-            >
-              <Download size={14} />
-              Export
-            </button>
+          {appData && !isMobile && (
+            <>
+              <button 
+                className="flex items-center gap-2 rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium hover:bg-zinc-700 transition-colors"
+                onClick={() => exportProjectToZip(appData.name, appData.files)}
+              >
+                <Download size={14} />
+                Export
+              </button>
+              <button 
+                className="flex items-center gap-2 rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium hover:bg-zinc-700 transition-colors"
+                onClick={() => setShowGitHubModal(true)}
+              >
+                <Github size={14} />
+                GitHub
+              </button>
+            </>
           )}
+          <button 
+            className={cn(
+              "flex items-center gap-2 rounded-md px-2 md:px-3 py-1.5 text-xs font-medium transition-colors",
+              activeTab === 'designer' ? "bg-zinc-700 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+            )}
+            onClick={() => {
+              setActiveTab('designer');
+              if (isMobile) setSidebarOpen(false);
+            }}
+            disabled={!appData}
+          >
+            <Palette size={14} />
+            <span className="hidden xs:block">Designer</span>
+          </button>
           <button 
             className={cn(
               "flex items-center gap-2 rounded-md px-2 md:px-3 py-1.5 text-xs font-medium transition-colors",
@@ -336,21 +438,25 @@ export default function App() {
               )}
             </div>
           ) : activeTab === 'preview' ? (
-            <div className="flex flex-1 flex-col bg-white overflow-auto">
-              {/* Simulated Preview */}
-              <div className="sticky top-0 z-10 flex h-8 items-center justify-between border-b bg-zinc-100 px-4">
+            <div className="flex flex-1 flex-col bg-white overflow-hidden">
+              {/* Browser Chrome */}
+              <div className="flex h-10 items-center justify-between border-b bg-zinc-100 px-4 shrink-0">
                 <div className="flex items-center gap-2">
                   <div className="flex gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-full bg-red-400" />
-                    <div className="h-2.5 w-2.5 rounded-full bg-yellow-400" />
-                    <div className="h-2.5 w-2.5 rounded-full bg-green-400" />
+                    <div className="h-3 w-3 rounded-full bg-red-400" />
+                    <div className="h-3 w-3 rounded-full bg-yellow-400" />
+                    <div className="h-3 w-3 rounded-full bg-green-400" />
                   </div>
-                  <div className="ml-4 flex items-center gap-2 rounded bg-white px-3 py-0.5 text-[10px] text-zinc-500 shadow-sm ring-1 ring-zinc-200">
+                  <div className="ml-4 flex items-center gap-2 rounded-md bg-white px-3 py-1 text-xs text-zinc-500 shadow-sm ring-1 ring-zinc-200 min-w-[200px]">
                     <span className="opacity-50">https://</span>
-                    <span>{appData?.name.toLowerCase().replace(/\s+/g, '-') || 'preview'}.nexus.ai</span>
+                    <span className="truncate">{previewUrl ? new URL(previewUrl).host : (appData?.name.toLowerCase().replace(/\s+/g, '-') || 'preview') + '.nexus.ai'}</span>
                   </div>
                 </div>
-                <ExternalLink size={12} className="text-zinc-400 cursor-pointer hover:text-zinc-600" />
+                {previewUrl && (
+                  <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-zinc-600 transition-colors">
+                    <ExternalLink size={14} />
+                  </a>
+                )}
               </div>
               
               {!appData ? (
@@ -360,64 +466,42 @@ export default function App() {
                       <Layout size={24} />
                     </div>
                     <h3 className="text-lg font-bold text-zinc-900">No App Generated</h3>
-                    <p className="text-sm text-zinc-500">Generate an app to see the preview.</p>
+                    <p className="text-sm text-zinc-500">Generate an app to see the live preview.</p>
                   </div>
                 </div>
+              ) : isBooting || !previewUrl ? (
+                <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 p-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-500 mb-4" />
+                  <h3 className="text-lg font-bold text-zinc-900 mb-2">Setting up environment</h3>
+                  <p className="text-sm text-zinc-500">{previewStatus}</p>
+                </div>
               ) : (
-                <div className="flex flex-1 flex-col bg-white">
-                  {/* Mockup Header */}
-                  <nav className="flex h-16 items-center justify-between border-b px-8">
-                    <div className="text-xl font-bold text-blue-600">{appData.name}</div>
-                    <div className="flex gap-6 text-sm font-medium text-zinc-600">
-                      <span>Home</span>
-                      <span>Features</span>
-                      <span>About</span>
-                      <button className="rounded-lg bg-blue-600 px-4 py-2 text-white">Get Started</button>
+                <iframe 
+                  src={previewUrl} 
+                  className="w-full h-full border-0 bg-white"
+                  title="WebContainer Preview"
+                  allow="cross-origin-isolated"
+                />
+              )}
+            </div>
+          ) : activeTab === 'designer' ? (
+            <div className="flex flex-1 flex-col overflow-hidden bg-[#111]">
+              {appData ? (
+                <VisualDesigner 
+                  files={appData.files} 
+                  onUpdateFiles={(updatedFiles) => {
+                    setAppData({ ...appData, files: updatedFiles });
+                    addLog("🎨 Theme applied successfully. Rebuilding preview...");
+                  }} 
+                />
+              ) : (
+                <div className="flex flex-1 items-center justify-center p-8 text-center">
+                  <div className="max-w-md">
+                    <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-zinc-500">
+                      <Palette size={32} />
                     </div>
-                  </nav>
-
-                  {/* Mockup Hero */}
-                  <div className="flex flex-1 flex-col items-center justify-center px-8 py-20 text-center">
-                    <motion.div
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="max-w-3xl"
-                    >
-                      <h2 className="mb-6 text-5xl font-extrabold tracking-tight text-zinc-900">
-                        {appData.description}
-                      </h2>
-                      <p className="mb-10 text-xl text-zinc-600">
-                        Experience the power of {appData.name}. Built with cutting-edge technology and designed for production excellence.
-                      </p>
-                      <div className="flex justify-center gap-4">
-                        <button className="rounded-xl bg-blue-600 px-8 py-4 text-lg font-bold text-white shadow-xl shadow-blue-500/20">
-                          Launch App
-                        </button>
-                        <button className="rounded-xl border border-zinc-200 bg-white px-8 py-4 text-lg font-bold text-zinc-900 shadow-sm">
-                          Learn More
-                        </button>
-                      </div>
-                    </motion.div>
-                  </div>
-
-                  {/* Mockup Features */}
-                  <div className="bg-zinc-50 px-8 py-20">
-                    <div className="mx-auto max-w-6xl">
-                      <div className="mb-12 text-center">
-                        <h3 className="text-3xl font-bold text-zinc-900">Why Choose {appData.name}?</h3>
-                      </div>
-                      <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
-                        {[1, 2, 3].map((i) => (
-                          <div key={i} className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
-                            <div className="mb-4 h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                              <Sparkles size={24} />
-                            </div>
-                            <h4 className="mb-2 text-xl font-bold text-zinc-900">Feature {i}</h4>
-                            <p className="text-zinc-600">High-performance React components with optimized state management and seamless backend integration.</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <h3 className="mb-2 text-xl font-bold text-white">Visual Designer</h3>
+                    <p className="text-sm text-zinc-400">Generate an app first to unlock the visual theme and layout editor.</p>
                   </div>
                 </div>
               )}
@@ -439,8 +523,8 @@ export default function App() {
                     <p className="text-sm leading-relaxed text-zinc-400">
                       Replace simulated previews with real-time Node.js execution using WebContainers. Run your Express server and React app directly in the browser.
                     </p>
-                    <div className="mt-4 inline-flex items-center rounded-full bg-blue-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-blue-500">
-                      High Priority
+                    <div className="mt-4 inline-flex items-center rounded-full bg-green-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-green-500">
+                      Completed
                     </div>
                   </div>
 
@@ -466,7 +550,7 @@ export default function App() {
                       Seamlessly push your generated projects to GitHub repositories. Manage branches, commits, and pull requests directly from Nexus.
                     </p>
                     <div className="mt-4 inline-flex items-center rounded-full bg-green-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-green-500">
-                      Planned
+                      Completed
                     </div>
                   </div>
 
@@ -478,8 +562,8 @@ export default function App() {
                     <p className="text-sm leading-relaxed text-zinc-400">
                       A drag-and-drop UI builder that stays in sync with your React code. Edit visually or via code, and see changes reflected instantly.
                     </p>
-                    <div className="mt-4 inline-flex items-center rounded-full bg-orange-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-orange-500">
-                      Concept
+                    <div className="mt-4 inline-flex items-center rounded-full bg-green-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-green-500">
+                      Completed
                     </div>
                   </div>
                 </div>
@@ -664,6 +748,17 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* GitHub Modal */}
+      {appData && (
+        <GitHubModal
+          isOpen={showGitHubModal}
+          onClose={() => setShowGitHubModal(false)}
+          files={appData.files}
+          defaultRepoName={appData.name}
+        />
+      )}
+
       {/* Clone Website Modal */}
       <AnimatePresence>
         {showCloneModal && (
