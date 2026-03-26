@@ -1,0 +1,5 @@
+{
+  "name": "Nexus AI App Builder",
+  "description": "A Replit-inspired AI-powered full-stack web application builder. Generate, edit, and review multi-page React apps with Express backends using natural language.",
+  "requestFramePermissions": ["microphone"]
+}
